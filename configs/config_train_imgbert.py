@@ -11,8 +11,8 @@ def get_train_cfg() -> ConfigDict:
     data_config.patch_size = 32
 
     model_config = ConfigDict()
-    model_config.encoder_cfg = transformer_cfg()
-    model_config.decoder_config = mlp_decoder_cfg()
+    model_config.encoder = transformer_cfg()
+    model_config.decoder = mlp_decoder_cfg()
     model_config.mask_ratio = 0.25
 
     cfg = ConfigDict()

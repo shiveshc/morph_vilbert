@@ -105,12 +105,12 @@ class Transformer(nn.Module):
         super().__init__()
         self.config = config
 
-        # layers = [TransformerLayer(config['model']['model_dim'],
-        #                            config['model']['num_heads'],
-        #                            config['model']['mlp_inner_dim']) for n in range(config['model']['num_layers'])]
-        layers = [nn.TransformerEncoderLayer(config['model']['model_dim'],
-                                             config['model']['num_heads'],
-                                             config['model']['mlp_inner_dim']) for n in range(config['model']['num_layers'])]
+        # layers = [TransformerLayer(config.model.encoder.model_dim,
+        #                            config.model.encoder.num_heads,
+        #                            config.model.encoder.mlp_inner_dim) for n in range(config.model.encoder.num_layers)]
+        layers = [nn.TransformerEncoderLayer(config.model.encoder.model_dim,
+                                             config.model.encoder.num_heads,
+                                             config.model.encoder.mlp_inner_dim) for n in range(config.model.encoder.num_layers)]
         self.encoder = nn.Sequential(*layers)
     
     def forward(self, x:torch.Tensor) -> torch.Tensor:

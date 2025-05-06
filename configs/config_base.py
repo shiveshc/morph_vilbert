@@ -10,6 +10,7 @@ def transformer_cfg() -> ConfigDict:
     cfg.num_heads = 4
     cfg.mlp_inner_dim = 64
     cfg.num_layers = 3
+    cfg.pos_embed = 'sine'
     return cfg
 
 
@@ -20,5 +21,6 @@ def mlp_decoder_cfg() -> ConfigDict:
     cfg = ConfigDict()
     cfg.mlp_inner_dim = 64
     cfg.mlp_num_inner_layers = 1
+    cfg.pos_embed = 'sine'
     return cfg
 
