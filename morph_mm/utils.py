@@ -1,4 +1,6 @@
+import numpy as np
 import torch
+import torch.nn as nn
 import matplotlib.pyplot as plt
 
 
@@ -63,20 +65,71 @@ class PatchImg():
         fig.tight_layout()
 
 
+class Learned2DPosEmbed(nn.Module):
+    def __init__(self,
+                 model_dim:int,
+                 height:int,
+                 width:int) -> None:
+        super().__init__()
+        self.row_embed = nn.Embedding(height, model_dim // 2)
+        self.col_embed = nn.Embedding(width, model_dim // 2)
+        nn.init.uniform_(self.row_embed.weight)
+        nn.init.uniform_(self.col_embed.weight)
+
+    def forward(self) -> torch.Tensor:
+        # shape: (H, W, D)
+        h = self.row_embed(torch.arange(self.row_embed.num_embeddings))
+        w = self.col_embed(torch.arange(self.col_embed.num_embeddings))
+        pos = torch.cat([
+            h.unsqueeze(1).expand(-1, w.size(0), -1),  # shape (H, W, D/2)
+            w.unsqueeze(0).expand(h.size(0), -1, -1)   # shape (H, W, D/2)
+        ], dim=-1)
+        pos = torch.reshape(pos, (-1, pos.shape[-1]))
+        return pos  # shape: (H*W, D)
+
+
+class SinCos2DPosEmbed(nn.Module):
+    def __init__(self,
+                 model_dim:int,
+                 height:int,
+                 width:int) -> None:
+        super().__init__()
+        freq = torch.tensor(np.linspace(0, 2*np.pi, model_dim//4), dtype=torch.float)
+        row_sin_embed = torch.stack([torch.sin(x*freq) for x in range(height)], dim=0)
+        row_cos_embed = torch.stack([torch.cos(x*freq) for x in range(height)], dim=0)
+        col_sin_embed = torch.stack([torch.sin(x*freq) for x in range(width)], dim=0)
+        col_cos_embed = torch.stack([torch.cos(x*freq) for x in range(width)], dim=0)
+        self.row_embed = torch.cat([row_sin_embed, row_cos_embed], dim=-1)
+        self.col_embed = torch.cat([col_sin_embed, col_cos_embed], dim=-1)
+    
+    def forward(self) -> torch.Tensor:
+        h = self.row_embed
+        w = self.col_embed
+        pos = torch.cat([
+            h.unsqueeze(1).expand(-1, w.size(0), -1),  # shape (H, W, D)
+            w.unsqueeze(0).expand(h.size(0), -1, -1)   # shape (H, W, D)
+        ], dim=-1)
+        pos = torch.reshape(pos, (-1, pos.shape[-1]))
+        return pos  # shape: (H*W, D)
+
+
 class PosEmbed:
     def __init__(self):
         pass
 
     @staticmethod
     def learned_embed(model_dim:int,
-                      num_tokens:int) -> torch.Tensor:
-        pass
-
+                      height:int,
+                      width:int) -> torch.Tensor:
+        emb = Learned2DPosEmbed(model_dim, height, width)
+        return emb()
+    
     
     @staticmethod
     def sin_embed(model_dim:int,
-                  num_tokens:int) -> torch.Tensor:
-        pass
+                  height:int,
+                  width:int) -> torch.Tensor:
+        emb = SinCos2DPosEmbed(model_dim, height, width)
     
 
         

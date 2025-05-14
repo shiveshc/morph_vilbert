@@ -5,93 +5,82 @@ from ml_collections import ConfigDict
 
 from morph_mm.models.transformer import Transformer
 from morph_mm.models.decoder import MLPDecoder
-from morph_mm.utils import PatchImg, PosEmbed
+from morph_mm.utils import PatchImg, PosEmbed, SinCos2DPosEmbed, Learned2DPosEmbed
 
 from typing import Dict, Tuple
 
 
 class ImgBERT(nn.Module):
+    """
+    Vision Transformer (BERT-style) model for masked image modeling.
+
+    Args:
+        config (ConfigDict): Configuration with data/model parameters.
+    """
     def __init__(self, config:ConfigDict) -> None:
         super().__init__()
 
         self.config = config
 
-        self.conv = nn.Conv2d(in_channels=config.data.in_channels,
-                              out_channels=config.model.encoder.model_dim,
-                              kernel_size=config.data.patch_size,
-                              stride=config.data.patch_size)
-        
         self.patcher = PatchImg(config.data.img_size, config.data.patch_size, config.data.in_channels)
         self.mask_token = nn.Parameter(torch.randn(1, 1, config.model.encoder.model_dim))
         self.cls_token = nn.Parameter(torch.randn(1, 1, config.model.encoder.model_dim))
 
-        self.num_tokens = (config.data.img_size//config.data.patch_size)**2
-        self.num_mask_tokens = int(self.num_tokens*config.model.mask_ratio)
-        if config.model.encoder.pos_embed == 'sine':
-            self.pos_embed = PosEmbed.sin_embed(config.model.encoder.model_dim, num_tokens)
+        h = w = config.data.img_size//config.data.patch_size
+        num_tokens = h*w
+        self.num_mask_tokens = int(num_tokens*config.model.mask_ratio)
+        if config.model.encoder.pos_embed == 'sine_cos':
+            self.pos_embed = SinCos2DPosEmbed(config.model.encoder.model_dim, h, w)
         elif config.model.encoder.pos_embed == 'learned':
-            self.pos_embed = PosEmbed.learned_embed(config.model.encoder.model_dim, num_tokens)
+            self.pos_embed = Learned2DPosEmbed(config.model.encoder.model_dim, h, w)
+        else:
+            raise NotImplementedError(f'{config.model.encoder.pos_embed} is not implemented')
 
         self.proj = nn.Linear(config.data.in_channels*config.data.patch_size**2, config.model.encoder.model_dim)
 
         self.encoder = Transformer(config)
         self.decoder = MLPDecoder(config)
-
+ 
     
-    def preprocess_img(self, x:torch.Tensor) -> torch.Tensor:
-        x = self.conv(x)
-        x = torch.reshape(x, (x.shape[0], x.shape[1], -1))
-        x = torch.permute(x, (0, 2, 1))
-        return x
-    
-    
-    def forward(self, batch:Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        img = batch['img']
-        print('1', img.shape)
-        img = self.patcher.patchify(img)
-        print('2', img.shape)
+    def forward(self,
+                batch:Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        orig_img = batch['img']
+        img = self.patcher.patchify(orig_img)
         
 
+        # select randomly mask tokens
         mask_param = torch.tensor(np.random.rand(img.shape[0], img.shape[1]))
         idx = torch.argsort(mask_param, dim=1)
         restore_idx = torch.argsort(idx, dim=1)
         num_mask_tokens = self.num_mask_tokens
 
+        # gather non mask tokens
         img = torch.gather(img, dim=1, index=idx[:, :, None].repeat(1, 1, img.shape[2]))
-        print('3', img.shape)
         gt = img[:, 0:num_mask_tokens, :]
-        print('4', gt.shape)
-        img = img[:, num_mask_tokens::, :]
-        print('5', img.shape)
+        keep_img = img[:, num_mask_tokens::, :]
         
-        img = self.proj(img)
-        print('6', img.shape)
-        mask_tokens = self.mask_token.repeat(img.shape[0], num_mask_tokens, 1)
-        img = torch.concat([mask_tokens, img], dim=1)
-        print('7', img.shape)
-        img = torch.gather(img, dim=1, index=restore_idx[:, :, None].repeat(1, 1, img.shape[2]))
-        print('8', img.shape)
-        img = torch.concat([self.cls_token.repeat(img.shape[0], 1, 1), img], dim=1)
-        print('9', img.shape)
-        img = self.encoder(img)
-        print('10', img.shape)
+        # add mask tokens and encode
+        x = self.proj(keep_img)
+        mask_tokens = self.mask_token.repeat(x.shape[0], num_mask_tokens, 1)
+        x = torch.concat([mask_tokens, x], dim=1)
+        x = torch.gather(x, dim=1, index=restore_idx[:, :, None].repeat(1, 1, x.shape[2]))
+        x = x + self.pos_embed()
+        x = torch.concat([self.cls_token.repeat(x.shape[0], 1, 1), x], dim=1)
+        x = self.encoder(x)
         
-        cls_token = img[:, 0, :]
-        print('11', cls_token.shape)
-        img = img[:, 1::, :]
-        print('12', img.shape)
-        pred = torch.gather(img, dim=1, index=idx[:, :, None].repeat(1, 1, img.shape[2]))
-        print('13', pred.shape)
-        pred = pred[:, 0:num_mask_tokens, :]
-        print('14', pred.shape)
+        # decode mask tokens
+        cls_token = x[:, 0, :]
+        x = x[:, 1::, :]
+        x = torch.gather(x, dim=1, index=idx[:, :, None].repeat(1, 1, x.shape[2]))
+        pred = x[:, 0:num_mask_tokens, :]
         pred = self.decoder(pred)
-        print('15', pred.shape)
 
-        print('pred', pred.shape)
-        print('gt', gt.shape)
-        print('cls_token', cls_token.shape)
+        # reconstruct image
+        recon_img = torch.concat([pred, keep_img], dim=1)
+        recon_img = torch.gather(recon_img, dim=1, index=restore_idx[:, :, None].repeat(1, 1, recon_img.shape[2]))
+        recon_img = self.patcher.unpatchify(recon_img)
 
-        return pred, gt, cls_token
+        return pred, gt, cls_token, orig_img, recon_img
 
         
 

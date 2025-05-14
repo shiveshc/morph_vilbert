@@ -75,6 +75,14 @@ class MLP(nn.Module):
 
 
 class TransformerLayer(nn.Module):
+    """
+    A single transformer encoder layer.
+
+    Args:
+        model_dim (int): Dimension of the model.
+        num_heads (int): Number of attention heads.
+        mlp_inner_dim (int): Inner dimension of the MLP block.
+    """
     def __init__(self,
                  model_dim:int,
                  num_heads:int,
@@ -116,6 +124,3 @@ class Transformer(nn.Module):
     def forward(self, x:torch.Tensor) -> torch.Tensor:
         x = self.encoder(x)
         return x
-
-        
-
